@@ -1,0 +1,6 @@
+game/
+run/
+build/
+*.log
+tools/aotdump/build/
+tools/aotdump/aotdump.jar

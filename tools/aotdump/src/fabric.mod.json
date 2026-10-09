@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "aotdump",
+  "version": "1.0.0",
+  "name": "AOT class dump (build tool)",
+  "environment": "*",
+  "entrypoints": { "preLaunch": ["aotdump.AotDump"] }
+}
