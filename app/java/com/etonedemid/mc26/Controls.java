@@ -24,7 +24,8 @@ import org.libsdl.app.SDLActivity;
 //             pause, camera view (F5) and debug screen (F3) at the top right; chat (with the keyboard) at the top left
 //     hotbar: tap a slot to select it
 //     elsewhere: drag to look, short tap to attack (left click), hold still to break (left button held)
-//   menus: touches go straight to the game (SDL makes them the mouse); a keyboard button at the top left; over a screen
+//   menus: touches go straight to the game (SDL makes them the mouse); keyboard and settings (render resolution) buttons
+//     at the top left; over a screen
 //     opened from the game, a close button and a move button (edit the layout)
 //   layout editor: every control shows, drag them (the D-pad moves as one), Done saves, Reset puts them back; offsets in
 //     screen heights, kept in the app's preferences
@@ -70,6 +71,8 @@ public class Controls extends View {
         new Button(G_CAM, ACT_KEY, KeyEvent.KEYCODE_F5), new Button(G_CHAT, ACT_KEY, KeyEvent.KEYCODE_T),
         new Button(G_F3, ACT_KEY, KeyEvent.KEYCODE_F3),
     };
+    static final String G_GEAR = "..#..#.." + ".######." + ".##..##." + "###..###" + "###..###" + ".##..##." + ".######." + "..#..#..";
+    final Button gearB = new Button(G_GEAR, ACT_KEY, 0);
     final Button closeB = new Button(G_CLOSE, ACT_KEY, KeyEvent.KEYCODE_ESCAPE), keybB = new Button(G_KEYB, ACT_KEY, 0),
         moveB = new Button(G_MOVE, ACT_KEY, 0), doneB = new Button(G_CHECK, ACT_KEY, 0), resetB = new Button(G_RESET, ACT_KEY, 0);
     final float[][] offs = new float[NB][2];   // layout: offsets in screen heights; offs[B_SNEAK] moves the D-pad
@@ -100,10 +103,13 @@ public class Controls extends View {
         try (BufferedReader r = new BufferedReader(new FileReader(new File(gameDir, "options.txt")))) {
             for (String l; (l = r.readLine()) != null; ) if (l.startsWith("guiScale:")) opt = Integer.parseInt(l.substring(9).trim());
         } catch (Exception e) { }
-        int w = getWidth(), h = getHeight(), s = 1;
+        int w = renderW(), h = renderH(), s = 1;
         while ((opt == 0 || s < opt) && w / (s + 1) >= 320 && h / (s + 1) >= 240) s++;
         return s;
     }
+    // the game's own window size: the render resolution (McActivity.renderHeight), or the view's at native
+    int renderH() { int h = ((McActivity) getContext()).renderHeight(); return h > 0 && h < getHeight() ? h : getHeight(); }
+    int renderW() { return (int) ((long) getWidth() * renderH() / Math.max(1, getHeight())); }
     int cachedScale; long scaleAt;
     void layout() {
         float W = getWidth(), H = getHeight(), u = H / 720f, b = 92 * u, m = 48 * u, tb = 0.7f * b;
@@ -114,7 +120,7 @@ public class Controls extends View {
         set(buttons[B_DROP], W - m - 0.95f * b, padCy - 1.9f * b, 0.7f * b);
         long now = System.currentTimeMillis();
         if (now - scaleAt > 2000) { cachedScale = guiScale(); scaleAt = now; }
-        int s = cachedScale;
+        float s = cachedScale * H / renderH();   // GUI pixels of the game's window, in view pixels
         hbSlot = 20 * s; hbX = W / 2f - 91 * s; hbY = H - 22 * s;
         set(buttons[B_INV], hbX + 182 * s + 6 * u, H - 22 * s, 22 * s);
         set(buttons[B_PAUSE], W - m / 2 - tb, m / 2, tb);
@@ -124,7 +130,8 @@ public class Controls extends View {
         for (int i = 0; i < NB; i++) if (i != B_SNEAK) buttons[i].r.offset(offs[i][0] * H, offs[i][1] * H);
         set(closeB, W - m / 2 - tb, m / 2, tb);
         set(keybB, m / 2, m / 2, tb);
-        set(moveB, m / 2 + tb + 12 * u, m / 2, tb);
+        set(gearB, m / 2 + tb + 12 * u, m / 2, tb);
+        set(moveB, m / 2 + 2 * tb + 24 * u, m / 2, tb);
         set(doneB, W / 2f + 6 * u, m / 2, tb);
         set(resetB, W / 2f - tb - 6 * u, m / 2, tb);
     }
@@ -218,6 +225,7 @@ public class Controls extends View {
             if (act == MotionEvent.ACTION_DOWN) {
                 float x = e.getX(), y = e.getY();
                 if (in(keybB, x, y, 8)) { keyboardOn = !keyboardOn; nativeTextInput(keyboardOn); invalidate(); return true; }
+                if (in(gearB, x, y, 8)) { ((McActivity) getContext()).openSettings(); return true; }
                 if (screenFromGame && in(moveB, x, y, 8)) { releaseAll(); editMode = true; invalidate(); return true; }
                 if (screenFromGame && in(closeB, x, y, 8)) { tapKey(KeyEvent.KEYCODE_ESCAPE); return true; }
             }
@@ -339,6 +347,7 @@ public class Controls extends View {
         }
         if (!inGame) {
             draw(c, keybB, keyboardOn);
+            draw(c, gearB, false);
             if (screenFromGame) { draw(c, moveB, false); draw(c, closeB, false); }
             return;
         }

@@ -37,6 +37,33 @@ public class McActivity extends SDLActivity {
 
     // On-screen controls over SDL's view; they switch between game and menu with the game's mouse capture
     private Controls controls;
+
+    // --- render resolution (the controls' settings button): SDL's surface buffer at that many lines, scaled up to the
+    // screen by the compositor; the game sees a smaller window and its swapchain follows. 0: native ---
+    int renderHeight() { return getSharedPreferences("video", Context.MODE_PRIVATE).getInt("height", 0); }
+    void applyResolution() {
+        if (mSurface == null) return;
+        int h = renderHeight();
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        int screenH = Math.min(sw, sh), screenW = Math.max(sw, sh);
+        if (h <= 0 || h >= screenH) mSurface.getHolder().setSizeFromLayout();
+        else mSurface.getHolder().setFixedSize((int) ((long) screenW * h / screenH) & ~1, h);
+    }
+    void openSettings() {
+        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
+        int screen = Math.min(sw, sh);
+        int[] heights = { 480, 540, 720, 900, 0 };
+        String[] labels = { "480p", "540p", "720p", "900p", "Native (" + screen + "p) - default" };
+        int cur = renderHeight(), sel = heights.length - 1;
+        for (int i = 0; i < heights.length; i++) if (heights[i] == cur) sel = i;
+        new AlertDialog.Builder(this).setTitle("Render resolution")
+            .setSingleChoiceItems(labels, sel, (d, w) -> {
+                getSharedPreferences("video", Context.MODE_PRIVATE).edit().putInt("height", heights[w]).apply();
+                applyResolution();
+                d.dismiss();
+            })
+            .setNegativeButton("Cancel", null).show();
+    }
     @Override protected void onRelativeMouse(boolean enabled) { if (controls != null) controls.setInGame(enabled); }
 
     // name, uuid, token == null: play offline
@@ -54,6 +81,7 @@ public class McActivity extends SDLActivity {
         super.onCreate(saved);
         if (mLayout != null) {
             controls = new Controls(this, new File(getExternalFilesDir(null), "minecraft"));
+            applyResolution();
             mLayout.addView(controls, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
         if (saved != null) return;   // recreated: the game is already running with its account

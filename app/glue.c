@@ -72,6 +72,9 @@ __attribute__((visibility("default"))) int SDL_main(int argc_in, char **argv_in)
     (void)argc_in; (void)argv_in;
     redirect_stdio();
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");   // else SDL follows the window's shape
+    // The on-screen keyboard whenever the game starts text input (a focused text field, our keyboard button). SDL's
+    // "auto" only shows it with no keyboard attached, and Android always reports keyboard devices.
+    SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "1");
     static char data[512], tmp[600], libs[512], gamedir[600], assets[600];
     snprintf(data, sizeof data, "%s", SDL_GetAndroidExternalStoragePath());
     snprintf(tmp, sizeof tmp, "%s/tmp", SDL_GetAndroidInternalStoragePath());
