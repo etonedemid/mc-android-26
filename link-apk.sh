@@ -15,6 +15,8 @@ $CC -shared -fPIC -O2 -o out/apk/lib/arm64-v8a/libmc.so out/mc.o app/glue.c app/
   -Wl,--wrap=dlopen,--wrap=getaddrinfo,--wrap=freeaddrinfo -Wl,--no-undefined -Lnatives -lSDL3 -lz -lm -ldl -llog -landroid \
   > out/link.log 2>&1 || { grep -vE '^>>>' out/link.log | sed 's/.*error: //' | sort -u | head -40; exit 1; }
 cp natives/*.so out/apk/lib/arm64-v8a/
+# Vulkan loader shim: surfaces report no rotation, so the game renders upright in landscape (app/vkshim.c)
+$CC -shared -fPIC -O2 -o out/apk/lib/arm64-v8a/libvkshim.so app/vkshim.c -ldl
 $NDK/llvm-strip --strip-debug out/apk/lib/arm64-v8a/*.so
 # Java: SDL's activity layer and ours
 rm -rf out/classes out/dex && mkdir -p out/classes out/dex

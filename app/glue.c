@@ -38,6 +38,7 @@ static void redirect_stdio(void) {
 __attribute__((visibility("default"))) int SDL_main(int argc_in, char **argv_in) {
     (void)argc_in; (void)argv_in;
     redirect_stdio();
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");   // else SDL follows the window's shape
     static char data[512], tmp[600], libs[512], gamedir[600], assets[600];
     snprintf(data, sizeof data, "%s", SDL_GetAndroidExternalStoragePath());
     snprintf(tmp, sizeof tmp, "%s/tmp", SDL_GetAndroidInternalStoragePath());
@@ -57,7 +58,7 @@ __attribute__((visibility("default"))) int SDL_main(int argc_in, char **argv_in)
     PROP("-Dorg.lwjgl.freetype.libname=%s/libfreetype.so", libs);
     PROP("-Dorg.lwjgl.shaderc.libname=%s/libshaderc.so", libs);
     PROP("-Dorg.lwjgl.spvc.libname=%s/libspirv-cross.so", libs);
-    PROP("-Dorg.lwjgl.vulkan.libname=/system/lib64/libvulkan.so");   // the system's Vulkan loader (a bare name isn't found)
+    PROP("-Dorg.lwjgl.vulkan.libname=%s/libvkshim.so", libs);   // the system's Vulkan loader, through vkshim.c (rotation)
     PROP("-Dorg.lwjgl.system.allocator=system");
     // the game loads OpenGL at startup even with the Vulkan backend: through Android's EGL, as there is no GLX
     PROP("-Dorg.lwjgl.opengl.contextAPI=EGL");
