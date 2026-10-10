@@ -1,0 +1,10 @@
+{
+  "reflection": [
+    {"type": "io.netty.channel.local.LocalChannel", "methods": [{"name": "<init>", "parameterTypes": []}]},
+    {"type": "io.netty.channel.local.LocalServerChannel", "methods": [{"name": "<init>", "parameterTypes": []}]},
+    {"type": "io.netty.channel.socket.nio.NioSocketChannel", "methods": [{"name": "<init>", "parameterTypes": []}]},
+    {"type": "io.netty.channel.socket.nio.NioServerSocketChannel", "methods": [{"name": "<init>", "parameterTypes": []}]},
+    {"type": "io.netty.channel.socket.nio.NioDatagramChannel", "methods": [{"name": "<init>", "parameterTypes": []}]},
+    {"type": "sun.nio.ch.SelectorImpl", "fields": [{"name": "selectedKeys"}, {"name": "publicSelectedKeys"}]}
+  ]
+}

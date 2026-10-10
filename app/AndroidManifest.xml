@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.etonedemid.mc26" android:versionCode="1" android:versionName="26.3-0.1">
+    <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="34" />
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <application android:label="Minecraft 26.3" android:icon="@mipmap/ic_launcher" android:hasCode="true"
+                 android:extractNativeLibs="true" android:largeHeap="true">
+        <activity android:name="com.etonedemid.mc26.McActivity" android:exported="true" android:screenOrientation="sensorLandscape"
+                  android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"
+                  android:theme="@style/Game" android:launchMode="singleInstance" android:preferMinimalPostProcessing="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,6 +1,13 @@
 game/
 run/
 build/
+build-x64/
+out/
+deps/
+natives/
+patched/
+logs/
 *.log
 tools/aotdump/build/
 tools/aotdump/aotdump.jar
+config-agent/.lock
