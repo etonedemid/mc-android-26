@@ -57,7 +57,7 @@ JNIEXPORT void JNICALL Java_com_etonedemid_mc26_McActivity_nativeLogin(JNIEnv *e
     LOG("account: %s", login_name[0] ? login_name : "offline");
 }
 
-// --- soft keyboard (Controls.java's keyboard and chat buttons): SDL text input on, which also raises the keyboard ---
+// --- Controls.java's on-screen keyboard: SDL text input on while it's up, so its text reaches the game ---
 static void SDLCALL text_input(void *on) {
     SDL_Window *w = SDL_GetKeyboardFocus();
     if (!w) return;
@@ -68,14 +68,47 @@ JNIEXPORT void JNICALL Java_com_etonedemid_mc26_Controls_nativeTextInput(JNIEnv 
     SDL_RunOnMainThread(text_input, on ? (void *)1 : NULL, false);
 }
 
+// --- the app in the background (McActivity.onStop/onStart): the game first gets half a second to pause itself (it
+// hears it lost focus: the pause menu, which also stops a singleplayer world), then its frames stop (vkshim.c holds the
+// next present) and so does the sound (OpenAL Soft's device paused; the music would play on otherwise) ---
+static char libs[512];
+static volatile int background, background_gen;
+static void set_paused(int on) {
+    char p[600];
+    snprintf(p, sizeof p, "%s/libvkshim.so", libs);   // as loaded by LWJGL: the same library
+    void *vk = dlopen(p, RTLD_NOW | RTLD_NOLOAD);
+    void (*vkshim_pause)(int) = vk ? (void (*)(int))dlsym(vk, "vkshim_pause") : NULL;
+    if (vkshim_pause) vkshim_pause(on);
+    snprintf(p, sizeof p, "%s/libopenal.so", libs);
+    void *al = dlopen(p, RTLD_NOW | RTLD_NOLOAD);
+    if (al) {
+        void *(*get_ctx)(void) = (void *(*)(void))dlsym(al, "alcGetCurrentContext");
+        void *(*ctx_dev)(void *) = (void *(*)(void *))dlsym(al, "alcGetContextsDevice");
+        void (*pause_dev)(void *) = (void (*)(void *))dlsym(al, on ? "alcDevicePauseSOFT" : "alcDeviceResumeSOFT");
+        void *ctx = get_ctx ? get_ctx() : NULL, *dev = ctx && ctx_dev ? ctx_dev(ctx) : NULL;
+        if (dev && pause_dev) pause_dev(dev);
+    }
+    LOG("game %s", on ? "paused in the background" : "resumed");
+}
+static void *pause_later(void *gen) {
+    usleep(500000);
+    if (background && background_gen == (int)(long)gen) set_paused(1);
+    return NULL;
+}
+JNIEXPORT void JNICALL Java_com_etonedemid_mc26_McActivity_nativeBackground(JNIEnv *env, jclass c, jboolean bg) {
+    (void)env; (void)c;
+    background = bg; int gen = ++background_gen;
+    if (!bg) { set_paused(0); return; }
+    pthread_t t; pthread_create(&t, NULL, pause_later, (void *)(long)gen); pthread_detach(t);
+}
+
 __attribute__((visibility("default"))) int SDL_main(int argc_in, char **argv_in) {
     (void)argc_in; (void)argv_in;
     redirect_stdio();
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");   // else SDL follows the window's shape
-    // The on-screen keyboard whenever the game starts text input (a focused text field, our keyboard button). SDL's
-    // "auto" only shows it with no keyboard attached, and Android always reports keyboard devices.
-    SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "1");
-    static char data[512], tmp[600], libs[512], gamedir[600], assets[600];
+    // Never Android's keyboard: Controls.java has its own, and turns SDL text input on for it
+    SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "0");
+    static char data[512], tmp[600], gamedir[600], assets[600];
     snprintf(data, sizeof data, "%s", SDL_GetAndroidExternalStoragePath());
     snprintf(tmp, sizeof tmp, "%s/tmp", SDL_GetAndroidInternalStoragePath());
     Dl_info di; dladdr((void *)SDL_main, &di);

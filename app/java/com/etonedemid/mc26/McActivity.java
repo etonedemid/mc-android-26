@@ -38,33 +38,52 @@ public class McActivity extends SDLActivity {
     // On-screen controls over SDL's view; they switch between game and menu with the game's mouse capture
     private Controls controls;
 
-    // --- render resolution (the controls' settings button): SDL's surface buffer at that many lines, scaled up to the
-    // screen by the compositor; the game sees a smaller window and its swapchain follows. 0: native ---
-    int renderHeight() { return getSharedPreferences("video", Context.MODE_PRIVATE).getInt("height", 0); }
+    // --- render resolution (the controls' settings button), a percentage of the screen's: SDL's view is laid out that
+    // much smaller and scaled back up to the screen as a view transform, so the game's window and swapchain are smaller.
+    // (A fixed SurfaceHolder size isn't stretched to the view by this phone's compositor.) Touches still map: the view's
+    // transform is undone for its events. ---
+    static final int[] SCALES = { 25, 33, 50, 67, 75, 100 };
+    int renderScale() { return getSharedPreferences("video", Context.MODE_PRIVATE).getInt("scale", 100); }
+    private boolean scaleListening;
     void applyResolution() {
-        if (mSurface == null) return;
-        int h = renderHeight();
-        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
-        int screenH = Math.min(sw, sh), screenW = Math.max(sw, sh);
-        if (h <= 0 || h >= screenH) mSurface.getHolder().setSizeFromLayout();
-        else mSurface.getHolder().setFixedSize((int) ((long) screenW * h / screenH) & ~1, h);
+        if (mSurface == null || mLayout == null) return;
+        if (!scaleListening) {   // the parent's size isn't known before layout, and changes with the window
+            scaleListening = true;
+            mLayout.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> { if (r - l != or - ol || b - t != ob - ot) v.post(this::applyResolution); });
+        }
+        int sc = renderScale(), pw = mLayout.getWidth(), ph = mLayout.getHeight();
+        android.view.ViewGroup.LayoutParams lp = mSurface.getLayoutParams();
+        if (sc >= 100 || pw == 0 || ph == 0) {
+            lp.width = lp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+            mSurface.setScaleX(1); mSurface.setScaleY(1);
+        } else {
+            lp.width = pw * sc / 100; lp.height = ph * sc / 100;
+            mSurface.setPivotX(0); mSurface.setPivotY(0);
+            mSurface.setScaleX((float) pw / lp.width); mSurface.setScaleY((float) ph / lp.height);
+        }
+        mSurface.setLayoutParams(lp);
     }
     void openSettings() {
-        int sw = getResources().getDisplayMetrics().widthPixels, sh = getResources().getDisplayMetrics().heightPixels;
-        int screen = Math.min(sw, sh);
-        int[] heights = { 480, 540, 720, 900, 0 };
-        String[] labels = { "480p", "540p", "720p", "900p", "Native (" + screen + "p) - default" };
-        int cur = renderHeight(), sel = heights.length - 1;
-        for (int i = 0; i < heights.length; i++) if (heights[i] == cur) sel = i;
+        String[] labels = new String[SCALES.length];
+        int cur = renderScale(), sel = 0;
+        for (int i = 0; i < SCALES.length; i++) {
+            labels[i] = SCALES[i] + "%" + (SCALES[i] == 100 ? " - default" : "");
+            if (SCALES[i] <= cur) sel = i;
+        }
         new AlertDialog.Builder(this).setTitle("Render resolution")
             .setSingleChoiceItems(labels, sel, (d, w) -> {
-                getSharedPreferences("video", Context.MODE_PRIVATE).edit().putInt("height", heights[w]).apply();
+                getSharedPreferences("video", Context.MODE_PRIVATE).edit().putInt("scale", SCALES[w]).apply();
                 applyResolution();
                 d.dismiss();
             })
             .setNegativeButton("Cancel", null).show();
     }
     @Override protected void onRelativeMouse(boolean enabled) { if (controls != null) controls.setInGame(enabled); }
+
+    // In the background the game stops (glue.c): frames and sound, after it has had a moment to pause itself
+    static native void nativeBackground(boolean background);
+    @Override protected void onStop() { super.onStop(); nativeBackground(true); }
+    @Override protected void onStart() { super.onStart(); nativeBackground(false); }
 
     // name, uuid, token == null: play offline
     static native void nativeLogin(String name, String uuid, String token);

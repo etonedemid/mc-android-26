@@ -5,6 +5,8 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.view.KeyEvent;
@@ -14,6 +16,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import org.libsdl.app.SDLActivity;
+import org.libsdl.app.SDLInputConnection;
 
 // On-screen controls over SDL's game view, as input the game can't tell from a keyboard and mouse: keys and mouse go in
 // through SDL's own entry points (SDLActivity.onNativeKeyDown/Up, onNativeMouse), the way a real device's would.
@@ -25,8 +28,9 @@ import org.libsdl.app.SDLActivity;
 //     hotbar: tap a slot to select it
 //     elsewhere: drag to look, short tap to attack (left click), hold still to break (left button held)
 //   menus: touches go straight to the game (SDL makes them the mouse); keyboard and settings (render resolution) buttons
-//     at the top left; over a screen
-//     opened from the game, a close button and a move button (edit the layout)
+//     at the top left; over a screen opened from the game, a close button and a move button (edit the layout)
+//   keyboard: our own, Minecraft-styled, as 1.12.2's (Android's doesn't reliably come up over SDL's view): at the top so
+//     the chat line stays visible (a key moves it to the bottom and back); typed text goes in as SDL text input
 //   layout editor: every control shows, drag them (the D-pad moves as one), Done saves, Reset puts them back; offsets in
 //     screen heights, kept in the app's preferences
 public class Controls extends View {
@@ -87,12 +91,14 @@ public class Controls extends View {
         this.gameDir = gameDir;
         prefs = c.getSharedPreferences("controls", Context.MODE_PRIVATE);
         for (int i = 0; i < NB; i++) { offs[i][0] = prefs.getFloat("x" + i, 0); offs[i][1] = prefs.getFloat("y" + i, 0); }
+        kbBottom = prefs.getBoolean("kbBottom", false);
     }
 
     // The game freed or captured the mouse (SDL's thread): in game vs a menu, and whether a menu was opened from the game.
     void setInGame(boolean g) {
         if (g == inGame) return;
-        if (!g) screenFromGame = true; else { screenFromGame = false; if (keyboardOn) { keyboardOn = false; nativeTextInput(false); } }
+        if (!g) screenFromGame = true; else screenFromGame = false;
+        if (g) post(() -> setKeyboard(false));
         inGame = g;
         post(() -> { releaseAll(); invalidate(); });
     }
@@ -107,8 +113,8 @@ public class Controls extends View {
         while ((opt == 0 || s < opt) && w / (s + 1) >= 320 && h / (s + 1) >= 240) s++;
         return s;
     }
-    // the game's own window size: the render resolution (McActivity.renderHeight), or the view's at native
-    int renderH() { int h = ((McActivity) getContext()).renderHeight(); return h > 0 && h < getHeight() ? h : getHeight(); }
+    // the game's own window size: the view's at the render scale (McActivity.renderScale)
+    int renderH() { return getHeight() * Math.min(100, ((McActivity) getContext()).renderScale()) / 100; }
     int renderW() { return (int) ((long) getWidth() * renderH() / Math.max(1, getHeight())); }
     int cachedScale; long scaleAt;
     void layout() {
@@ -166,6 +172,112 @@ public class Controls extends View {
         for (Finger f : fingers) f.role = R_NONE;
     }
 
+    // --- the on-screen keyboard: 5 rows of 13 units, two pages (letters, symbols) ---
+    static final int KK_CHAR = 0, KK_KEY = 1, KK_SHIFT = 2, KK_PAGE = 3, KK_PASTE = 4, KK_PLACE = 5, KK_HIDE = 6, KB_ROWS = 5, KB_UNITS = 13;
+    static final class Key {   // code: a character, or an Android key code
+        final String label, glyph; final float w; final int kind, code;
+        Key(String label, float w, int kind, int code, String glyph) { this.label = label; this.w = w; this.kind = kind; this.code = code; this.glyph = glyph; }
+    }
+    final java.util.ArrayList<Key>[][] kbRows = new java.util.ArrayList[2][KB_ROWS];
+    int kbPage, kbShift;   // shift: 1 for the next letter, 2 locked
+    boolean kbBottom;
+    Key kbDown;
+    final RectF kbRect = new RectF();
+    float kbPx;
+    {
+        String[][] chars = { { "1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm,." }, { "!@#$%^&*()", "~`-_=+[]{}", ":;'\"<>?\\/", "@~^*+=%,." } };
+        for (int pg = 0; pg < 2; pg++) {
+            java.util.ArrayList<Key>[] r = kbRows[pg];
+            for (int i = 0; i < KB_ROWS; i++) r[i] = new java.util.ArrayList<>();
+            r[0].add(new Key("Esc", 1.5f, KK_KEY, KeyEvent.KEYCODE_ESCAPE, null));
+            r[1].add(new Key("Tab", 1.5f, KK_KEY, KeyEvent.KEYCODE_TAB, null));
+            r[2].add(new Key(pg == 1 ? "ABC" : "?123", 1.5f, KK_PAGE, 0, null));
+            r[3].add(new Key("Shift", 2, KK_SHIFT, 0, null));
+            for (int i = 0; i < 4; i++) for (char ch : chars[pg][i].toCharArray()) r[i].add(new Key(null, 1, KK_CHAR, ch, null));
+            r[0].add(new Key("Bksp", 1.5f, KK_KEY, KeyEvent.KEYCODE_DEL, null));
+            r[1].add(new Key(null, 1.5f, KK_CHAR, pg == 1 ? '|' : '/', null));
+            r[2].add(new Key("Enter", 2.5f, KK_KEY, KeyEvent.KEYCODE_ENTER, null));
+            r[3].add(new Key("Shift", 2, KK_SHIFT, 0, null));
+            r[4].add(new Key("Hide", 1.5f, KK_HIDE, 0, null));
+            r[4].add(new Key("Paste", 1.5f, KK_PASTE, 0, null));
+            r[4].add(new Key(null, 1, KK_PLACE, 0, G_MOVE));
+            r[4].add(new Key(null, 5, KK_CHAR, ' ', null));
+            r[4].add(new Key(null, 1, KK_KEY, KeyEvent.KEYCODE_DPAD_LEFT, G_LEFT));
+            r[4].add(new Key(null, 1, KK_KEY, KeyEvent.KEYCODE_DPAD_UP, G_UP));
+            r[4].add(new Key(null, 1, KK_KEY, KeyEvent.KEYCODE_DPAD_DOWN, G_DOWN));
+            r[4].add(new Key(null, 1, KK_KEY, KeyEvent.KEYCODE_DPAD_RIGHT, G_RIGHT));
+        }
+    }
+    void setKeyboard(boolean on) {
+        if (on == keyboardOn) return;
+        keyboardOn = on; nativeTextInput(on);   // SDL only passes text on while text input is on
+        removeCallbacks(kbRepeat); kbDown = null;
+        invalidate();
+    }
+    void kbLayout() {
+        float W = getWidth(), H = getHeight(), m = 8 * H / 720f, w = Math.min(W - 2 * m, H * 2.2f), h = H * 0.44f;
+        float y = kbBottom ? H - h - m : m;
+        kbRect.set((W - w) / 2, y, (W + w) / 2, y + h);
+        kbPx = Math.max(1, (float) Math.floor(h / KB_ROWS / 20));   // a key is about a Minecraft button tall: 20 GUI pixels
+    }
+    RectF kbKeyRect(int row, int i) {
+        float u = kbRect.width() / KB_UNITS, rh = kbRect.height() / KB_ROWS, x = kbRect.left;
+        java.util.ArrayList<Key> r = kbRows[kbPage][row];
+        for (int j = 0; j < i; j++) x += r.get(j).w * u;
+        return new RectF(x, kbRect.top + row * rh, x + r.get(i).w * u, kbRect.top + (row + 1) * rh);
+    }
+    Key kbHit(float x, float y) {
+        for (int row = 0; row < KB_ROWS; row++)
+            for (int i = 0; i < kbRows[kbPage][row].size(); i++) if (kbKeyRect(row, i).contains(x, y)) return kbRows[kbPage][row].get(i);
+        return null;
+    }
+    void kbText(String t) { SDLInputConnection.nativeCommitText(t, 1); }
+    void kbPress(Key k) {   // a key's action, on touching it (and again as it repeats)
+        switch (k.kind) {
+            case KK_CHAR: {
+                char ch = (char) k.code;
+                if (kbShift != 0) ch = Character.toUpperCase(ch);
+                if (kbShift == 1) kbShift = 0;
+                kbText(String.valueOf(ch));
+                break;
+            }
+            case KK_KEY: tapKey(k.code); break;
+            case KK_SHIFT: kbShift = (kbShift + 1) % 3; break;   // once, locked, off
+            case KK_PAGE: kbPage ^= 1; kbDown = null; break;
+            case KK_PASTE: {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+                android.content.ClipData clip = cm.getPrimaryClip();
+                if (clip != null && clip.getItemCount() > 0) kbText(clip.getItemAt(0).coerceToText(getContext()).toString().replace('\n', ' '));
+                break;
+            }
+            case KK_PLACE: kbBottom = !kbBottom; prefs.edit().putBoolean("kbBottom", kbBottom).apply(); break;
+            case KK_HIDE: setKeyboard(false); break;
+        }
+        invalidate();
+    }
+    final Runnable kbRepeat = new Runnable() {   // Backspace and the arrows repeat while held
+        @Override public void run() {
+            if (kbDown == null) return;
+            kbPress(kbDown);
+            postDelayed(this, 50);
+        }
+    };
+    boolean kbTouch(int act, float x, float y) {
+        if (act == MotionEvent.ACTION_DOWN || act == MotionEvent.ACTION_POINTER_DOWN) {
+            Key k = kbHit(x, y);
+            removeCallbacks(kbRepeat);
+            kbDown = k;
+            if (k == null) return true;
+            kbPress(k);
+            boolean repeats = k.kind == KK_KEY && k.code != KeyEvent.KEYCODE_ESCAPE && k.code != KeyEvent.KEYCODE_TAB && k.code != KeyEvent.KEYCODE_ENTER;
+            if (repeats && kbDown != null) postDelayed(kbRepeat, 400);
+        } else if (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_POINTER_UP || act == MotionEvent.ACTION_CANCEL) {
+            removeCallbacks(kbRepeat); kbDown = null; invalidate();
+        }
+        return true;
+    }
+    boolean kbFinger;   // the current gesture started on the keyboard
+
     // --- fingers ---
     static final int R_NONE = 0, R_LOOK = 1, R_PAD = 2, R_BUTTON = 3, R_DRAG = 4, R_PASS = 5;
     static final class Finger { int id = -1, role, button; boolean moved, breaking; float x, y, sx, sy; long t; }
@@ -221,10 +333,15 @@ public class Controls extends View {
         int act = e.getActionMasked(), idx = e.getActionIndex();
         layout();
         if (editMode) return editTouch(act, e.getX(idx), e.getY(idx));
-        if (!inGame) {   // menus: only our buttons; anything else goes to the game (SDL makes it the mouse)
+        if (!inGame) {   // menus: only our buttons and keyboard; anything else goes to the game (SDL makes it the mouse)
+            if (keyboardOn) {
+                kbLayout();
+                if (act == MotionEvent.ACTION_DOWN) kbFinger = kbRect.contains(e.getX(), e.getY());
+                if (kbFinger) return kbTouch(act, e.getX(idx), e.getY(idx));
+            }
             if (act == MotionEvent.ACTION_DOWN) {
                 float x = e.getX(), y = e.getY();
-                if (in(keybB, x, y, 8)) { keyboardOn = !keyboardOn; nativeTextInput(keyboardOn); invalidate(); return true; }
+                if (in(keybB, x, y, 8)) { setKeyboard(!keyboardOn); return true; }
                 if (in(gearB, x, y, 8)) { ((McActivity) getContext()).openSettings(); return true; }
                 if (screenFromGame && in(moveB, x, y, 8)) { releaseAll(); editMode = true; invalidate(); return true; }
                 if (screenFromGame && in(closeB, x, y, 8)) { tapKey(KeyEvent.KEYCODE_ESCAPE); return true; }
@@ -244,7 +361,7 @@ public class Controls extends View {
                     if (i == B_SNEAK || !in(b, x, y, 8)) continue;
                     f.role = R_BUTTON; f.button = i; b.pressed = true;
                     if (b.action == ACT_MOUSE) mouse(b.key, true); else key(b.key, true);
-                    if (i == B_CHAT) postDelayed(() -> { keyboardOn = true; nativeTextInput(true); }, 150);
+                    if (i == B_CHAT) postDelayed(() -> setKeyboard(true), 150);
                     invalidate();
                     return true;
                 }
@@ -337,6 +454,73 @@ public class Controls extends View {
         draw(c, new RectF(padCx - 1.5f * b, padCy - b / 2, padCx - 0.5f * b, padCy + b / 2), G_LEFT, pressedState && (padDirs & 4) != 0);
         draw(c, new RectF(padCx + 0.5f * b, padCy - b / 2, padCx + 1.5f * b, padCy + b / 2), G_RIGHT, pressedState && (padDirs & 8) != 0);
     }
+    // Minecraft's font (McFont) as one strip of 8x8 glyphs, a blank column apart (else scaled draws catch a neighbour's
+    // edge); its text has a shadow a GUI pixel down-right at a quarter
+    // of the colour
+    Bitmap font;
+    final Paint fontPaint = new Paint(), kbPaint = new Paint();
+    float textWidth(String t, float p) { float w = 0; for (char ch : t.toCharArray()) w += McFont.ADV[ch - 32] * p; return w - p; }
+    void drawText(Canvas c, String t, float x, float y, float p, int color) {
+        if (font == null) {
+            font = Bitmap.createBitmap(95 * 10, 8, Bitmap.Config.ARGB_8888);
+            for (int g = 0; g < 95; g++)
+                for (int yy = 0; yy < 8; yy++) for (int xx = 0; xx < 8; xx++)
+                    if ((McFont.ROWS[g * 8 + yy] & (0x80 >> xx)) != 0) font.setPixel(g * 10 + 1 + xx, yy, 0xffffffff);
+        }
+        fontPaint.setFilterBitmap(false);
+        for (int pass = 0; pass < 2; pass++) {
+            int col = pass == 0 ? 0xff000000 | (color >> 2 & 0x3f3f3f) : color;
+            fontPaint.setColorFilter(new PorterDuffColorFilter(col, PorterDuff.Mode.SRC_IN));
+            float cx = x + (pass == 0 ? p : 0), cy = y + (pass == 0 ? p : 0);
+            for (char ch : t.toCharArray()) {
+                if (ch > 32 && ch < 127) {
+                    int g = ch - 32;
+                    c.drawBitmap(font, new Rect(g * 10 + 1, 0, g * 10 + 9, 8), new RectF(cx, cy, cx + 8 * p, cy + 8 * p), fontPaint);
+                }
+                cx += McFont.ADV[ch - 32] * p;
+            }
+        }
+    }
+    // a Minecraft button: black outline, grey face lit at the top left and shaded at the bottom right; blue when held
+    void drawMcButton(Canvas c, RectF r, float p, boolean held, boolean lit) {
+        kbPaint.setColor(0xe6000000); c.drawRect(r, kbPaint);
+        kbPaint.setColor(held ? 0xeb7a85b8 : lit ? 0xeb8f8f8f : 0xeb707070);
+        c.drawRect(r.left + p, r.top + p, r.right - p, r.bottom - p, kbPaint);
+        kbPaint.setColor(0x40ffffff);
+        c.drawRect(r.left + p, r.top + p, r.right - p, r.top + 2 * p, kbPaint);
+        c.drawRect(r.left + p, r.top + 2 * p, r.left + 2 * p, r.bottom - p, kbPaint);
+        kbPaint.setColor(0x4d000000);
+        c.drawRect(r.left + p, r.bottom - 2 * p, r.right - p, r.bottom - p, kbPaint);
+        c.drawRect(r.right - 2 * p, r.top + 2 * p, r.right - p, r.bottom - 2 * p, kbPaint);
+    }
+    void drawKeyboard(Canvas c) {
+        kbLayout();
+        float p = kbPx, m = 2 * p;
+        kbPaint.setColor(0x8c000000);   // the chat's dark backing
+        c.drawRect(kbRect.left - m, kbRect.top - m, kbRect.right + m, kbRect.bottom + m, kbPaint);
+        for (int row = 0; row < KB_ROWS; row++)
+            for (int i = 0; i < kbRows[kbPage][row].size(); i++) {
+                Key k = kbRows[kbPage][row].get(i);
+                RectF r = kbKeyRect(row, i);
+                r.inset(p / 2, p / 2);
+                boolean lit = k.kind == KK_SHIFT && kbShift != 0, held = k == kbDown;
+                drawMcButton(c, r, p, held, lit);
+                int col = held || lit ? 0xffffffa0 : 0xffe0e0e0;   // Minecraft's yellow when held or on
+                if (k.glyph != null) {
+                    float gs = 8 * p, gx = r.centerX() - gs / 2, gy = r.centerY() - gs / 2;
+                    glyphPaint.setAlpha(255); glyphPaint.setFilterBitmap(false);
+                    glyphPaint.setColorFilter(new PorterDuffColorFilter(col, PorterDuff.Mode.SRC_IN));
+                    Bitmap bm = glyph(k.glyph);
+                    c.drawBitmap(bm, new Rect(0, 0, bm.getWidth(), bm.getHeight()), new RectF(gx, gy, gx + gs, gy + gs), glyphPaint);
+                    glyphPaint.setColorFilter(null);
+                    continue;
+                }
+                String t = k.label;
+                if (t == null) t = k.code == ' ' ? "" : String.valueOf(kbShift != 0 ? Character.toUpperCase((char) k.code) : (char) k.code);
+                if (k.kind == KK_SHIFT && kbShift == 2) t = "SHIFT";
+                drawText(c, t, r.centerX() - textWidth(t, p) / 2, r.centerY() - 4 * p, p, col);
+            }
+    }
     @Override protected void onDraw(Canvas c) {
         layout();
         if (editMode) {
@@ -349,6 +533,7 @@ public class Controls extends View {
             draw(c, keybB, keyboardOn);
             draw(c, gearB, false);
             if (screenFromGame) { draw(c, moveB, false); draw(c, closeB, false); }
+            if (keyboardOn) drawKeyboard(c);
             return;
         }
         drawPad(c, true);
