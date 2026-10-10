@@ -11,3 +11,4 @@ logs/
 tools/aotdump/build/
 tools/aotdump/aotdump.jar
 config-agent/.lock
+msa-client-id

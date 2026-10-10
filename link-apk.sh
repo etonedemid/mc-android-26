@@ -18,9 +18,12 @@ cp natives/*.so out/apk/lib/arm64-v8a/
 # Vulkan loader shim: surfaces report no rotation, so the game renders upright in landscape (app/vkshim.c)
 $CC -shared -fPIC -O2 -o out/apk/lib/arm64-v8a/libvkshim.so app/vkshim.c -ldl
 $NDK/llvm-strip --strip-debug out/apk/lib/arm64-v8a/*.so
-# Java: SDL's activity layer and ours
-rm -rf out/classes out/dex && mkdir -p out/classes out/dex
-javac -source 8 -target 8 -Xlint:none -nowarn -cp $J -d out/classes $(find app/java -name '*.java')
+# Java: SDL's activity layer and ours. MSA_CLIENT_ID (or the git-ignored file msa-client-id): the Microsoft application
+# ID for sign-in; without one the dialog only offers offline play.
+[ -z "$MSA_CLIENT_ID" ] && [ -f msa-client-id ] && MSA_CLIENT_ID=$(cat msa-client-id)
+rm -rf out/classes out/dex out/gen && mkdir -p out/classes out/dex out/gen/com/etonedemid/mc26
+printf 'package com.etonedemid.mc26;\nfinal class Config { static final String MSA_CLIENT_ID = "%s"; }\n' "${MSA_CLIENT_ID:-}" > out/gen/com/etonedemid/mc26/Config.java
+javac -source 8 -target 8 -Xlint:none -nowarn -cp $J -d out/classes $(find app/java out/gen -name '*.java')
 $BT/d8 --release --min-api 31 --lib $J --output out/dex $(find out/classes -name '*.class')
 rm -rf out/res && mkdir -p out/res && $BT/aapt2 compile --dir app/res -o out/res/
 rm -f out/mc26.unaligned.apk out/mc26.apk

@@ -1245,12 +1245,17 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
      */
     public static boolean setRelativeMouseEnabled(boolean enabled)
     {
+        // mc26: the game captures the mouse in play and frees it in menus; the touch controls follow that
+        if (mSingleton != null) mSingleton.onRelativeMouse(enabled);
         if (enabled && !supportsRelativeMouse()) {
             return false;
         }
 
         return SDLActivity.getMotionListener().setRelativeMouseEnabled(enabled);
     }
+
+    /** mc26: relative mouse mode switched by the game (called on SDL's thread). */
+    protected void onRelativeMouse(boolean enabled) {}
 
     /**
      * This method is called by SDL using JNI.

@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <jni.h>
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "mc26", __VA_ARGS__)
 
@@ -33,6 +34,38 @@ static void redirect_stdio(void) {
     dup2(p[1], 1); dup2(p[1], 2);
     setvbuf(stdout, NULL, _IOLBF, 0); setvbuf(stderr, NULL, _IONBF, 0);
     pthread_t t; pthread_create(&t, NULL, log_pump, (void *)(long)p[0]); pthread_detach(t);
+}
+
+// --- the account, from the activity's sign-in dialog (McActivity.java): the game starts once it is decided ---
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+static int login_decided;
+static char login_name[64], login_uuid[64], login_token[4096];   // empty name: offline
+JNIEXPORT void JNICALL Java_com_etonedemid_mc26_McActivity_nativeLogin(JNIEnv *env, jclass c, jstring name, jstring uuid, jstring token) {
+    (void)c;
+    pthread_mutex_lock(&lock);
+    if (name && uuid && token) {
+        const char *n = (*env)->GetStringUTFChars(env, name, NULL), *u = (*env)->GetStringUTFChars(env, uuid, NULL),
+                   *t = (*env)->GetStringUTFChars(env, token, NULL);
+        snprintf(login_name, sizeof login_name, "%s", n); snprintf(login_uuid, sizeof login_uuid, "%s", u);
+        snprintf(login_token, sizeof login_token, "%s", t);
+        (*env)->ReleaseStringUTFChars(env, name, n); (*env)->ReleaseStringUTFChars(env, uuid, u); (*env)->ReleaseStringUTFChars(env, token, t);
+    }
+    login_decided = 1;
+    pthread_cond_broadcast(&cond);
+    pthread_mutex_unlock(&lock);
+    LOG("account: %s", login_name[0] ? login_name : "offline");
+}
+
+// --- soft keyboard (Controls.java's keyboard and chat buttons): SDL text input on, which also raises the keyboard ---
+static void SDLCALL text_input(void *on) {
+    SDL_Window *w = SDL_GetKeyboardFocus();
+    if (!w) return;
+    if (on) SDL_StartTextInput(w); else SDL_StopTextInput(w);
+}
+JNIEXPORT void JNICALL Java_com_etonedemid_mc26_Controls_nativeTextInput(JNIEnv *env, jclass c, jboolean on) {
+    (void)env; (void)c;
+    SDL_RunOnMainThread(text_input, on ? (void *)1 : NULL, false);
 }
 
 __attribute__((visibility("default"))) int SDL_main(int argc_in, char **argv_in) {
@@ -73,9 +106,13 @@ __attribute__((visibility("default"))) int SDL_main(int argc_in, char **argv_in)
     argv[argc++] = "-Xmx2g";
     argv[argc++] = "-Djava.awt.headless=true";
     for (int i = 0; i < n; i++) argv[argc++] = a[i];
-    char *game[] = { "--username", "etonedemid", "--version", "26.3", "--gameDir", gamedir, "--assetsDir", assets,
-                     "--assetIndex", "34", "--uuid", "00000000000000000000000000000000", "--accessToken", "0",
-                     "--userType", "legacy", "--versionType", "release" };
+    pthread_mutex_lock(&lock);
+    while (!login_decided) pthread_cond_wait(&cond, &lock);
+    pthread_mutex_unlock(&lock);
+    int msa = login_name[0] != 0;
+    char *game[] = { "--username", msa ? login_name : "etonedemid", "--version", "26.3", "--gameDir", gamedir, "--assetsDir", assets,
+                     "--assetIndex", "34", "--uuid", msa ? login_uuid : "00000000000000000000000000000000",
+                     "--accessToken", msa ? login_token : "0", "--userType", msa ? "msa" : "legacy", "--versionType", "release" };
     for (size_t i = 0; i < sizeof game / sizeof *game; i++) argv[argc++] = game[i];
     argv[argc] = NULL;
     LOG("starting Minecraft 26.3: data %s, libraries %s", data, libs);
